@@ -95,15 +95,9 @@ namespace PSNChecker
         static async Task Main(string[] args)
         {
             var token = Environment.GetEnvironmentVariable("TELEGRAM_BOT_TOKEN");
-            var chatStr = Environment.GetEnvironmentVariable("TELEGRAM_CHAT_ID");
-            if (string.IsNullOrWhiteSpace(token) || string.IsNullOrWhiteSpace(chatStr))
+            if (string.IsNullOrWhiteSpace(token))
             {
-                Console.WriteLine("ERROR: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID environment variables are required.");
-                return;
-            }
-            if (!long.TryParse(chatStr, out _chatId))
-            {
-                Console.WriteLine("ERROR: TELEGRAM_CHAT_ID must be a number.");
+                Console.WriteLine("ERROR: TELEGRAM_BOT_TOKEN environment variable is required.");
                 return;
             }
 
@@ -123,9 +117,7 @@ namespace PSNChecker
             };
             _bot.StartReceiving(HandleUpdateAsync, HandleErrorAsync, receiverOptions, cts.Token);
 
-            await SendWelcome();
-
-            // Run forever
+            // Run forever — bot waits silently for /start from any user
             await Task.Delay(-1);
         }
 
@@ -188,6 +180,7 @@ namespace PSNChecker
             {
                 if (update.Message != null && update.Message.Text != null)
                 {
+                    _chatId = update.Message.Chat.Id;
                     var txt = update.Message.Text.Trim();
                     if (txt.StartsWith("/start") || txt.StartsWith("/menu"))
                     {
@@ -200,6 +193,8 @@ namespace PSNChecker
                 }
                 else if (update.CallbackQuery != null)
                 {
+                    if (update.CallbackQuery.Message != null)
+                        _chatId = update.CallbackQuery.Message.Chat.Id;
                     var data = update.CallbackQuery.Data;
                     await bot.AnswerCallbackQueryAsync(update.CallbackQuery.Id);
                     if (data == "start") await StartGeneration();
