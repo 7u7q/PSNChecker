@@ -25,6 +25,8 @@ namespace PSNChecker
         static readonly object _lock = new object();
         static int _checked = 0;
         static int _found = 0;
+        static int _bad = 0;
+        static DateTime _startedAt;
 
         static readonly HttpClient _http = new HttpClient(new HttpClientHandler
         {
@@ -222,6 +224,8 @@ namespace PSNChecker
                 _genCts = new CancellationTokenSource();
                 _checked = 0;
                 _found = 0;
+                _bad = 0;
+                _startedAt = DateTime.UtcNow;
                 _genTask = Task.Run(() => GenerationLoop(_genCts.Token));
             }
             return Task.CompletedTask;
@@ -241,10 +245,17 @@ namespace PSNChecker
             try { await t; } catch { }
         }
 
+        static string FormatElapsed()
+        {
+            if (_startedAt == default) return "00:00:00";
+            var t = DateTime.UtcNow - _startedAt;
+            return $"{(int)t.TotalHours:D2}:{t.Minutes:D2}:{t.Seconds:D2}";
+        }
+
         static async Task SendStatus()
         {
             bool running = _genTask != null && !_genTask.IsCompleted;
-            string msg = $"الحالة: {(running ? "يعمل ▶️" : "متوقف ⏹")}\nتم فحص: {_checked}\nتم العثور: {_found}";
+            string msg = $"State: {(running ? "Running" : "Stopped")}\nChecked: {_checked}\nFound : {_found}\nBad : {_bad}\nالوقت Time : {FormatElapsed()}";
             await _bot.SendTextMessageAsync(_chatId, msg, replyMarkup: BuildMenu());
         }
 
@@ -263,15 +274,14 @@ namespace PSNChecker
         static async Task GenerationLoop(CancellationToken ct)
         {
             var seen = new HashSet<string>();
-            var seenLock = new object();
-            const int parallel = 6;
+            const int parallel = 2;
             var sem = new SemaphoreSlim(parallel, parallel);
             var tasks = new List<Task>();
 
             while (!ct.IsCancellationRequested)
             {
                 string name = GenerateUsername();
-                lock (seenLock) { if (!seen.Add(name)) continue; }
+                if (!seen.Add(name)) continue;
                 if (name.Length < 3 || name.Length > 16) continue;
 
                 await sem.WaitAsync(ct);
@@ -282,6 +292,9 @@ namespace PSNChecker
                 }, ct));
 
                 tasks.RemoveAll(t => t.IsCompleted);
+
+                // throttle to avoid PSN rate-limiting
+                try { await Task.Delay(700, ct); } catch { break; }
             }
             try { await Task.WhenAll(tasks); } catch { }
         }
@@ -292,10 +305,13 @@ namespace PSNChecker
             Interlocked.Increment(ref _checked);
             Console.WriteLine($"{name} -> {result}");
 
+            if (result == CheckResult.Taken || result == CheckResult.Invalid)
+                Interlocked.Increment(ref _bad);
+
             if (result != CheckResult.Available) return;
 
             // Double-confirm to ensure 100% accuracy
-            await Task.Delay(250, ct);
+            await Task.Delay(500, ct);
             var confirm = await CheckPsn(name, ct);
             if (confirm != CheckResult.Available)
             {
@@ -306,7 +322,12 @@ namespace PSNChecker
             Interlocked.Increment(ref _found);
             try
             {
-                var caption = $"`{name}`";
+                var caption = $"`{name}`\n\nFound : {_found}\nBad : {_bad}\nالوقت Time : {FormatElapsed()}";
+                if (_chatId == 0)
+                {
+                    Console.WriteLine("Skipping notification: no chat target yet.");
+                    return;
+                }
                 if (_gifFileId != null)
                 {
                     await _bot.SendAnimationAsync(_chatId, InputFile.FromFileId(_gifFileId),
