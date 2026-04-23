@@ -93,6 +93,33 @@ namespace PSNChecker
             "LoneWolf","LoneHunter","LoneReaper","LoneKnight"
         };
 
+        static readonly string[] ShortWords = new[]
+        {
+            "Thanks","Smile","Hello","Peace","Dream","Happy","Lucky","Sunny","Cloud","Storm",
+            "Magic","Honey","Sugar","Candy","Pizza","Mango","Lemon","Apple","Cream","Cherry",
+            "Tiger","Eagle","Raven","Falcon","Panda","Koala","Otter","Husky","Fenix","Zebra",
+            "Vibes","Karma","Echo","Pulse","Spark","Flame","Frost","Storm","Sonic","Comet",
+            "Pixel","Glitch","Cyber","Neon","Vapor","Synth","Retro","Lunar","Solar","Cosmic",
+            "Ninja","Samurai","Vandal","Phantom","Reaper","Hunter","Shadow","Wraith","Demon","Angel",
+            "King","Queen","Prince","Knight","Baron","Royal","Noble","Saint","Hero","Lord",
+            "Cool","Calm","Wild","Rude","Loud","Mute","Slow","Fast","Free","Dark",
+            "Truth","Faith","Hope","Glory","Grace","Vision","Spirit","Soul","Mind","Heart"
+        };
+
+        static readonly string[] LongCompounds = new[]
+        {
+            "AfterSex","AfterParty","AfterMath","AfterShock","AfterLife","AfterDark","AfterNoon","AfterTaste",
+            "MidnightRider","SunsetBoulevard","BlackoutKing","DaybreakHero","TwilightSaga","MorningStar",
+            "ThunderStrike","LightningBolt","FireStorm","IceBreaker","WaterFall","EarthQuake",
+            "DeepBlueSea","HighVoltage","LowProfile","FastForward","RewindTime","PlayBack",
+            "GameOverMan","RestartLife","SaveTheDay","LoadingError","FullPower","OverDrive",
+            "SilverBullet","GoldenChild","DiamondHand","RubyRose","CrystalClear","IronFist",
+            "BlackHorse","WhiteWolf","RedDragon","BlueWhale","GreenHornet","PurpleHaze",
+            "SmoothCriminal","BeatItHard","DangerZone","HighwayMan","RoadRunner","StreetFighter",
+            "EmptyPocket","BrokenHeart","MissingPiece","LostSoul","FoundAgain","AliveAndWell",
+            "NeverEnding","OnceUponATime","HappilyEverAfter","JustForFun","JustInCase","JustDoIt"
+        };
+
         static readonly Random _rand = new Random();
         static readonly string _gifPath = Path.Combine(AppContext.BaseDirectory, "assets", "welcome.gif");
         static string _gifFileId = null;
@@ -336,11 +363,15 @@ namespace PSNChecker
 
         static string GenerateUsername()
         {
-            // 70% curated handcrafted names, 30% compositional from refined word lists
-            if (_rand.Next(10) < 7)
-            {
-                return CuratedNames[_rand.Next(CuratedNames.Length)];
-            }
+            // Distribution:
+            // 25% short real English words (3-7 letters): Thanks, Smile, Tiger ...
+            // 20% long meaningful compound words: AfterSex, MidnightRider ...
+            // 35% curated gamer handles
+            // 20% compositional Prefix+Suffix
+            int r = _rand.Next(100);
+            if (r < 25) return ShortWords[_rand.Next(ShortWords.Length)];
+            if (r < 45) return LongCompounds[_rand.Next(LongCompounds.Length)];
+            if (r < 80) return CuratedNames[_rand.Next(CuratedNames.Length)];
             var p = Prefixes[_rand.Next(Prefixes.Length)];
             var s = Suffixes[_rand.Next(Suffixes.Length)];
             return p + s;
