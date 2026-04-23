@@ -27,6 +27,9 @@ namespace PSNChecker
         static int _found = 0;
         static int _bad = 0;
         static DateTime _startedAt;
+        static int? _statusMsgId;
+        static long _statusChatId;
+        static CancellationTokenSource _statusCts;
 
         static readonly HttpClient _http = new HttpClient(new HttpClientHandler
         {
@@ -216,33 +219,42 @@ namespace PSNChecker
             return Task.CompletedTask;
         }
 
-        static Task StartGeneration()
+        static async Task StartGeneration()
         {
+            CancellationTokenSource sCts;
             lock (_lock)
             {
-                if (_genTask != null && !_genTask.IsCompleted) return Task.CompletedTask;
+                if (_genTask != null && !_genTask.IsCompleted) return;
                 _genCts = new CancellationTokenSource();
                 _checked = 0;
                 _found = 0;
                 _bad = 0;
                 _startedAt = DateTime.UtcNow;
+                _statusMsgId = null;
+                _statusChatId = _chatId;
+                _statusCts = new CancellationTokenSource();
+                sCts = _statusCts;
                 _genTask = Task.Run(() => GenerationLoop(_genCts.Token));
             }
-            return Task.CompletedTask;
+            await SendInitialStatus();
+            _ = Task.Run(() => StatusUpdateLoop(sCts.Token));
         }
 
         static async Task StopGeneration()
         {
-            CancellationTokenSource cts;
+            CancellationTokenSource cts, sCts;
             Task t;
             lock (_lock)
             {
                 cts = _genCts;
+                sCts = _statusCts;
                 t = _genTask;
             }
             if (cts == null || t == null || t.IsCompleted) return;
             cts.Cancel();
             try { await t; } catch { }
+            sCts?.Cancel();
+            await EditStatus(); // final update
         }
 
         static string FormatElapsed()
@@ -252,11 +264,74 @@ namespace PSNChecker
             return $"{(int)t.TotalHours:D2}:{t.Minutes:D2}:{t.Seconds:D2}";
         }
 
-        static async Task SendStatus()
+        static string BuildStatusCaption()
         {
             bool running = _genTask != null && !_genTask.IsCompleted;
-            string msg = $"State: {(running ? "Running" : "Stopped")}\nChecked: {_checked}\nFound : {_found}\nBad : {_bad}\nالوقت Time : {FormatElapsed()}";
-            await _bot.SendTextMessageAsync(_chatId, msg, replyMarkup: BuildMenu());
+            return $"State : {(running ? "Running" : "Stopped")}\nChecked : {_checked}\nFound : {_found}\nBad : {_bad}\nTime : {FormatElapsed()}";
+        }
+
+        static async Task SendInitialStatus()
+        {
+            try
+            {
+                if (_statusChatId == 0) return;
+                var caption = BuildStatusCaption();
+                Message msg;
+                if (_gifFileId != null)
+                {
+                    msg = await _bot.SendAnimationAsync(_statusChatId, InputFile.FromFileId(_gifFileId),
+                        caption: caption, replyMarkup: BuildMenu());
+                }
+                else if (SysFile.Exists(_gifPath))
+                {
+                    using var fs = SysFile.OpenRead(_gifPath);
+                    msg = await _bot.SendAnimationAsync(_statusChatId,
+                        InputFile.FromStream(fs, "welcome.gif"),
+                        caption: caption, replyMarkup: BuildMenu());
+                    _gifFileId = msg.Animation?.FileId ?? msg.Document?.FileId;
+                }
+                else
+                {
+                    msg = await _bot.SendTextMessageAsync(_statusChatId, caption, replyMarkup: BuildMenu());
+                }
+                _statusMsgId = msg.MessageId;
+            }
+            catch (Exception e) { Console.WriteLine("SendInitialStatus error: " + e.Message); }
+        }
+
+        static async Task EditStatus()
+        {
+            try
+            {
+                if (_statusMsgId == null || _statusChatId == 0) return;
+                var caption = BuildStatusCaption();
+                // For animations, edit caption; for text messages, edit text
+                try
+                {
+                    await _bot.EditMessageCaptionAsync(_statusChatId, _statusMsgId.Value, caption, replyMarkup: BuildMenu());
+                }
+                catch
+                {
+                    await _bot.EditMessageTextAsync(_statusChatId, _statusMsgId.Value, caption, replyMarkup: BuildMenu());
+                }
+            }
+            catch { /* ignore edit errors (no change, rate limit, etc.) */ }
+        }
+
+        static async Task StatusUpdateLoop(CancellationToken ct)
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                try { await Task.Delay(5000, ct); } catch { return; }
+                await EditStatus();
+            }
+        }
+
+        static async Task SendStatus()
+        {
+            // /status command — just edit the live status if it exists, else send a fresh one
+            if (_statusMsgId != null) { await EditStatus(); return; }
+            await _bot.SendTextMessageAsync(_chatId, BuildStatusCaption(), replyMarkup: BuildMenu());
         }
 
         static string GenerateUsername()
@@ -322,7 +397,7 @@ namespace PSNChecker
             Interlocked.Increment(ref _found);
             try
             {
-                var caption = $"`{name}`\n\nFound : {_found}\nBad : {_bad}\nالوقت Time : {FormatElapsed()}";
+                var caption = $"`{name}`";
                 if (_chatId == 0)
                 {
                     Console.WriteLine("Skipping notification: no chat target yet.");
